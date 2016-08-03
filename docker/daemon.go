@@ -72,6 +72,7 @@ func NewDaemonCli() *DaemonCli {
 		daemonConfig.V2Only = true
 	}
 
+	//配置启动参数
 	daemonConfig.InstallFlags(daemonFlags, presentInHelp)
 	daemonConfig.InstallFlags(flag.CommandLine, absentFromHelp)
 	daemonFlags.Require(flag.Exact, 0)
@@ -145,6 +146,7 @@ func (cli *DaemonCli) CmdDaemon(args ...string) error {
 	// warn from uuid package when running the daemon
 	uuid.Loggerf = logrus.Warnf
 
+	//调整一下daemon的启动方式
 	if !commonFlags.FlagSet.IsEmpty() || !clientFlags.FlagSet.IsEmpty() {
 		// deny `docker -D daemon`
 		illegalFlag := getGlobalFlag()
@@ -157,7 +159,9 @@ func (cli *DaemonCli) CmdDaemon(args ...string) error {
 
 	configFile := cli.flags.String([]string{daemonConfigFileFlag}, defaultDaemonConfigFile, "Daemon configuration file")
 
+	//匹配配置参数
 	cli.flags.ParseFlags(args, true)
+	//配置参数生效
 	commonFlags.PostParse()
 
 	if commonFlags.TrustKey == "" {
@@ -207,6 +211,7 @@ func (cli *DaemonCli) CmdDaemon(args ...string) error {
 		}()
 	}
 
+	//定义apiserver的配置，包括认证、日志输出、版本等。
 	serverConfig := &apiserver.Config{
 		AuthorizationPluginNames: cli.Config.AuthorizationPlugins,
 		Logging:                  true,
@@ -237,12 +242,24 @@ func (cli *DaemonCli) CmdDaemon(args ...string) error {
 		cli.Config.Hosts = make([]string, 1)
 	}
 
+	//定义一个新的apiserver。
+	//apiServer是一个这样的结构(api/server/server.go)：
+	/*
+	type Server struct {
+	    cfg           *Config
+	    servers       []*HTTPServer
+	    routers       []router.Router
+	    authZPlugins  []authorization.Plugin
+	    routerSwapper *routerSwapper
+           }
+	*/
 	api := apiserver.New(serverConfig)
 
 	for i := 0; i < len(cli.Config.Hosts); i++ {
 		var err error
 		if cli.Config.Hosts[i], err = opts.ParseHost(cli.Config.TLS, cli.Config.Hosts[i]); err != nil {
-			logrus.Fatalf("error parsing -H %s : %v", cli.Config.Hosts[i], err)
+			logrus.Fatalf("error parsin
+			g -H %s : %v", cli.Config.Hosts[i], err)
 		}
 
 		protoAddr := cli.Config.Hosts[i]
@@ -256,6 +273,8 @@ func (cli *DaemonCli) CmdDaemon(args ...string) error {
 		}
 
 		logrus.Debugf("Listener created for HTTP on %s (%s)", protoAddrParts[0], protoAddrParts[1])
+		
+		//初始化api的servers数组，里面放着的都是httpserver类型。此时也没有具体的运行什么
 		api.Accept(protoAddrParts[1], l...)
 	}
 
@@ -264,13 +283,51 @@ func (cli *DaemonCli) CmdDaemon(args ...string) error {
 	}
 	cli.TrustKeyPath = commonFlags.TrustKey
 
+           //创建镜像仓库服务
 	registryService := registry.NewService(cli.Config.ServiceOptions)
 
+	//初始化libcontainer。比如在linux中，就会调用libcontainerd/remote_linux.go中的New方法。
+	
 	containerdRemote, err := libcontainerd.New(filepath.Join(cli.Config.ExecRoot, "libcontainerd"), cli.getPlatformRemoteOptions()...)
 	if err != nil {
 		logrus.Fatal(err)
 	}
 
+           //初始化守护进程使得能够服务。需要输入仓库服务和libcontainerd服务的参数。
+	//返回的d是Daemon类型：
+	/*
+	type Daemon struct {
+	ID                        string
+	repository                string
+	containers                container.Store
+	execCommands              *exec.Store
+	referenceStore            reference.Store
+	downloadManager           *xfer.LayerDownloadManager
+	uploadManager             *xfer.LayerUploadManager
+	distributionMetadataStore dmetadata.Store
+	trustKey                  libtrust.PrivateKey
+	idIndex                   *truncindex.TruncIndex
+	configStore               *Config
+	statsCollector            *statsCollector
+	defaultLogConfig          containertypes.LogConfig
+	RegistryService           *registry.Service
+	EventsService             *events.Events
+	netController             libnetwork.NetworkController
+	volumes                   *store.VolumeStore
+	discoveryWatcher          discoveryReloader
+	root                      string
+	seccompEnabled            bool
+	shutdown                  bool
+	uidMaps                   []idtools.IDMap
+	gidMaps                   []idtools.IDMap
+	layerStore                layer.Store
+	imageStore                image.Store
+	nameIndex                 *registrar.Registrar
+	linkIndex                 *linkIndex
+	containerd                libcontainerd.Client
+	defaultIsolation          containertypes.Isolation // Default isolation mode on Windows
+           }
+	*/
 	d, err := daemon.NewDaemon(cli.Config, registryService, containerdRemote)
 	if err != nil {
 		if pfile != nil {
@@ -289,6 +346,21 @@ func (cli *DaemonCli) CmdDaemon(args ...string) error {
 		"graphdriver": d.GraphDriverName(),
 	}).Info("Docker daemon")
 
+	//初始化http的路由，这个路由设计的非常易懂，所有的路由及处理函数的映射关系
+	//请见api/server/router/文件夹中的内容。有类似这样的内容：
+	//router.NewPostRoute("/containers/create", r.postContainersCreate),
+	//其中，对应的处理函数postContainersCreate在api/server/router/container/container_routes.go
+	//但是，实际上这个函数也不做具体的事情，他交给backend去做，就是daemon去做
+	/*
+	ccr, err := s.backend.ContainerCreate(types.ContainerCreateConfig{
+		Name:             name,
+		Config:           config,
+		HostConfig:       hostConfig,
+		NetworkingConfig: networkingConfig,
+		AdjustCPUShares:  adjustCPUShares,
+	})
+	 */
+	//其中的ContainerCreate在
 	initRouter(api, d)
 
 	reload := func(config *daemon.Config) {
@@ -315,7 +387,10 @@ func (cli *DaemonCli) CmdDaemon(args ...string) error {
 	// The serve API routine never exits unless an error occurs
 	// We need to start it as a goroutine and wait on it so
 	// daemon doesn't exit
+	//设置一个传输apiServer状态的通道
 	serveAPIWait := make(chan error)
+	//重新开启一个goroutine作为httpServer。
+	//具体的请查看api/server/server.go中的方法func (s *Server) serveAPI() error 
 	go api.Wait(serveAPIWait)
 
 	signal.Trap(func() {
@@ -334,7 +409,10 @@ func (cli *DaemonCli) CmdDaemon(args ...string) error {
 
 	// Daemon is fully initialized and handling API traffic
 	// Wait for serve API to complete
+	//<-表示接受通道值，只有当通道中有值的时候，才会返回。
+	//也就是说主线程一直在等待api.wait的goroutine启动apiServer之后的返回才会进行。
 	errAPI := <-serveAPIWait
+	//当接收到返回（返回就是错误了），开始清理进程。
 	shutdownDaemon(d, 15)
 	containerdRemote.Cleanup()
 	if errAPI != nil {

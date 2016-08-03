@@ -547,9 +547,26 @@ func (daemon *Daemon) newContainer(name string, config *containertypes.Config, i
 		return nil, err
 	}
 
+	//根据id生成hostname，并且写到config中
 	daemon.generateHostname(id, config)
 	entrypoint, args := daemon.getEntrypointAndArgs(config.Entrypoint, config.Cmd)
 
+	/*
+		          func NewBaseContainer(id, root string) *Container {
+			       return &Container{
+				CommonContainer: CommonContainer{
+					ID:            id,
+					State:         NewState(),
+					ExecCommands:  exec.NewStore(),
+					Root:          root,
+					MountPoints:   make(map[string]*volume.MountPoint),
+					StreamConfig:  runconfig.NewStreamConfig(),
+					attachContext: &attachContext{},
+				},
+			}
+	*/
+	//创建的base也是一个Container对象。Container对象继承commonContainer，因此以下
+	//这些参数都是commoncontainer的。
 	base := daemon.newBaseContainer(id)
 	base.Created = time.Now().UTC()
 	base.Path = entrypoint
@@ -1435,6 +1452,12 @@ func (daemon *Daemon) setSecurityOptions(container *container.Container, hostCon
 func (daemon *Daemon) setHostConfig(container *container.Container, hostConfig *containertypes.HostConfig) error {
 	// Do not lock while creating volumes since this could be calling out to external plugins
 	// Don't want to block other actions, like `docker ps` because we're waiting on an external plugin
+	/*
+			容器本身原有自带的挂载的数据卷，应该是容器的json镜像文件中 "Volumes"这个key对应得内容；
+		           通过其他数据卷容器（通过--volumes-from）挂载的数据卷;
+		           通过命令行参数（-v参数）挂载的与主机绑定的数据卷，与主机绑定得数据卷在docker中叫做bind-mounts，
+		           这种数据卷与一般的正常得数据卷是有些细微区别的；
+	*/
 	if err := daemon.registerMountPoints(container, hostConfig); err != nil {
 		return err
 	}
@@ -1443,6 +1466,14 @@ func (daemon *Daemon) setHostConfig(container *container.Container, hostConfig *
 	defer container.Unlock()
 
 	// Register any links from the host config before starting the container
+	/*
+		注册互联的容器，容器之间除了可以通过 ip:端口 相互访问，容器之间还可以互联
+		（通过--link 容器名字 的方式），例如一个web容器可以通过这种方式与一个数据库容器互联；
+		互联的容器之间可以相互访问，可以通过环境变量和/etc/hosts 来公开连接信息。
+		容器之间的互联关系要注册到sqlite3数据库中，也就是daemon.containerGraph中，
+		deamon.containerGraph是一个graphdb.Database类型，这个小型的数据库默认的实现方式是sqllite，
+		里面存储这容器之间的互联关系；
+	*/
 	if err := daemon.registerLinks(container, hostConfig); err != nil {
 		return err
 	}
@@ -1454,6 +1485,8 @@ func (daemon *Daemon) setHostConfig(container *container.Container, hostConfig *
 	}
 
 	container.HostConfig = hostConfig
+	//将容器的配置写入磁盘，我目前的理解是写入存储的路径是/var/lib/docker/container/containerId/config.json
+	// 和 /var/lib/docker/container/containerId/hostConfig.json
 	return container.ToDisk()
 }
 

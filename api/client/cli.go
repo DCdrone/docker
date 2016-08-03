@@ -113,6 +113,7 @@ func (cli *DockerCli) restoreTerminal(in io.Closer) error {
 // is set the client scheme will be set to https.
 // The client will be given a 32-second timeout (see https://github.com/docker/docker/pull/8035).
 func NewDockerCli(in io.ReadCloser, out, err io.Writer, clientFlags *cli.ClientFlags) *DockerCli {
+	//创建cli对象
 	cli := &DockerCli{
 		in:      in,
 		out:     out,
@@ -120,6 +121,7 @@ func NewDockerCli(in io.ReadCloser, out, err io.Writer, clientFlags *cli.ClientF
 		keyFile: clientFlags.Common.TrustKey,
 	}
 
+	//docker客户端模式的创建过程，如果需要安全认证，需要加载安全认证的证书。
 	cli.init = func() error {
 		clientFlags.PostParse()
 		configFile, e := cliconfig.Load(cliconfig.ConfigDir())

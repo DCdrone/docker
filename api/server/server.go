@@ -72,6 +72,7 @@ func (s *Server) Close() {
 // with Server method for each. It sets createMux() as Handler also.
 func (s *Server) serveAPI() error {
 	var chErrors = make(chan error, len(s.servers))
+	//每一个httpServer都用一个goroutine进行启动
 	for _, srv := range s.servers {
 		srv.srv.Handler = s.routerSwapper
 		go func(srv *HTTPServer) {

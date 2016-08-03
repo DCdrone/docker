@@ -45,6 +45,7 @@ func (err initErr) Error() string {
 	return err.Error()
 }
 
+//该函数比较关键，会通过反射机制运行参数对应的函数。
 func (cli *Cli) command(args ...string) (func(...string) error, error) {
 	for _, c := range cli.handlers {
 		if c == nil {
@@ -57,14 +58,20 @@ func (cli *Cli) command(args ...string) (func(...string) error, error) {
 			}
 			camelArgs[i] = strings.ToUpper(s[:1]) + strings.ToLower(s[1:])
 		}
+		//获取方法的名称，根据传入的参数和“Cmd”合并而来
 		methodName := "Cmd" + strings.Join(camelArgs, "")
+		//通过reflect包的反射函数获取方法的句柄。
 		method := reflect.ValueOf(c).MethodByName(methodName)
 		if method.IsValid() {
 			if c, ok := c.(Initializer); ok {
+				//还会调用init()函数
 				if err := c.Initialize(); err != nil {
 					return nil, initErr{err}
 				}
 			}
+			//运行对应的方法。
+			//client模式下的对应方法在api/client/包中，每一个函数都是Cmd开头的方法；
+			//daemon模式下的对应方法在docker/daemon.go中，CmdDaemon函数。
 			return method.Interface().(func(...string) error), nil
 		}
 	}
@@ -72,6 +79,7 @@ func (cli *Cli) command(args ...string) (func(...string) error, error) {
 }
 
 // Run executes the specified command.
+// 该函数还会调用上面的command函数
 func (cli *Cli) Run(args ...string) error {
 	if len(args) > 1 {
 		command, err := cli.command(args[:2]...)
