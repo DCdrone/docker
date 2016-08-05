@@ -239,6 +239,7 @@ func delNamespace(s *specs.Spec, nsType specs.NamespaceType) {
 	}
 }
 
+//设置容器的namespaces。
 func setNamespaces(daemon *Daemon, s *specs.Spec, c *container.Container) error {
 	userNS := false
 	// user
@@ -246,6 +247,8 @@ func setNamespaces(daemon *Daemon, s *specs.Spec, c *container.Container) error 
 		uidMap, gidMap := daemon.GetUIDGIDMaps()
 		if uidMap != nil {
 			userNS = true
+			//这个会生成随机数吗？
+			//应该不会，这里只是初始化需要创建的namespace。具体的有linux的系统调用创建随机id。
 			ns := specs.Namespace{Type: "user"}
 			setNamespace(s, ns)
 			s.Linux.UIDMappings = specMapping(uidMap)
@@ -264,6 +267,7 @@ func setNamespaces(daemon *Daemon, s *specs.Spec, c *container.Container) error 
 			ns.Path = fmt.Sprintf("/proc/%d/ns/net", nc.State.GetPID())
 			if userNS {
 				// to share a net namespace, they must also share a user namespace
+				//不会重复加的哦。
 				nsUser := specs.Namespace{Type: "user"}
 				nsUser.Path = fmt.Sprintf("/proc/%d/ns/user", nc.State.GetPID())
 				setNamespace(s, nsUser)
@@ -554,14 +558,17 @@ func setMounts(daemon *Daemon, s *specs.Spec, c *container.Container, mounts []c
 }
 
 func (daemon *Daemon) populateCommonSpec(s *specs.Spec, c *container.Container) error {
+	//将通过--link相连的容器中的信息获取过来，然后将其中的信息转成环境变量(是[]string数组的形式，每一个元素类似于"NAME=xxxx")的形式
 	linkedEnv, err := daemon.setupLinkedContainers(c)
 	if err != nil {
 		return err
 	}
+	//设置容器的目录
 	s.Root = specs.Root{
 		Path:     c.BaseFS,
 		Readonly: c.HostConfig.ReadonlyRootfs,
 	}
+	//设置目录的权限。
 	rootUID, rootGID := daemon.GetRemappedUIDGID()
 	if err := c.SetupWorkingDirectory(rootUID, rootGID); err != nil {
 		return err
@@ -570,6 +577,7 @@ func (daemon *Daemon) populateCommonSpec(s *specs.Spec, c *container.Container) 
 	if len(cwd) == 0 {
 		cwd = "/"
 	}
+	//设置容器进程的参数、执行目录、环境变量、终端、主机名。
 	s.Process.Args = append([]string{c.Path}, c.Args...)
 	s.Process.Cwd = cwd
 	s.Process.Env = c.CreateDaemonEnvironment(linkedEnv)
@@ -579,8 +587,12 @@ func (daemon *Daemon) populateCommonSpec(s *specs.Spec, c *container.Container) 
 	return nil
 }
 
+//创建容器的namespace以及cgroups等相关。
 func (daemon *Daemon) createSpec(c *container.Container) (*libcontainerd.Spec, error) {
 	s := oci.DefaultSpec()
+	//populateCommand(container, env) 主要是为container的execdriver(最终启动容器的)
+	//设置网络模式、设置namespace(pid,ipc,uts)等、资源(resources)限制等，并且设置
+	//在容器内执行的Command，Command中含有容器内进程的启动命令；
 	if err := daemon.populateCommonSpec(&s, c); err != nil {
 		return nil, err
 	}
@@ -599,6 +611,7 @@ func (daemon *Daemon) createSpec(c *container.Container) (*libcontainerd.Spec, e
 		parent = daemon.configStore.CgroupParent
 	}
 
+	//是否支持systemd？
 	if useSystemd {
 		cgroupsPath = parent + ":" + scopePrefix + ":" + c.ID
 		logrus.Debugf("createSpec: cgroupsPath: %s", cgroupsPath)
@@ -607,6 +620,7 @@ func (daemon *Daemon) createSpec(c *container.Container) (*libcontainerd.Spec, e
 	}
 	s.Linux.CgroupsPath = &cgroupsPath
 
+	//设置一系列的参数
 	if err := setResources(&s, c.HostConfig.Resources); err != nil {
 		return nil, fmt.Errorf("linux runtime spec resources: %v", err)
 	}
@@ -620,30 +634,38 @@ func (daemon *Daemon) createSpec(c *container.Container) (*libcontainerd.Spec, e
 	if err := setUser(&s, c); err != nil {
 		return nil, fmt.Errorf("linux spec user: %v", err)
 	}
+	//设置namespace
 	if err := setNamespaces(daemon, &s, c); err != nil {
 		return nil, fmt.Errorf("linux spec namespaces: %v", err)
 	}
+	//设置cgroup。
 	if err := setCapabilities(&s, c); err != nil {
 		return nil, fmt.Errorf("linux spec capabilities: %v", err)
 	}
+	//?
 	if err := setSeccomp(daemon, &s, c); err != nil {
 		return nil, fmt.Errorf("linux seccomp: %v", err)
 	}
 
+	//?
 	if err := daemon.setupIpcDirs(c); err != nil {
 		return nil, err
 	}
 
+	//container.setupMounts() 返回container的所有挂载点；
 	mounts, err := daemon.setupMounts(c)
 	if err != nil {
 		return nil, err
 	}
 	mounts = append(mounts, c.IpcMounts()...)
 	mounts = append(mounts, c.TmpfsMounts()...)
+	//设置容器的所有挂载点。
 	if err := setMounts(daemon, &s, c, mounts); err != nil {
 		return nil, fmt.Errorf("linux mounts: %v", err)
 	}
 
+	//和网络的设置有关，但是这一点究竟是干什么的呢？
+	//设置到进程的钩子，通过进程/proc/XXX/exe的链接文件获取到。
 	for _, ns := range s.Linux.Namespaces {
 		if ns.Type == "network" && ns.Path == "" && !c.Config.NetworkDisabled {
 			target, err := os.Readlink(filepath.Join("/proc", strconv.Itoa(os.Getpid()), "exe"))
@@ -652,6 +674,7 @@ func (daemon *Daemon) createSpec(c *container.Container) (*libcontainerd.Spec, e
 			}
 
 			s.Hooks = specs.Hooks{
+				//// Hooks are the commands run at various lifecycle events of the container.
 				Prestart: []specs.Hook{{
 					Path: target, // FIXME: cross-platform
 					Args: []string{"libnetwork-setkey", c.ID, daemon.netController.ID()},
@@ -660,6 +683,7 @@ func (daemon *Daemon) createSpec(c *container.Container) (*libcontainerd.Spec, e
 		}
 	}
 
+	//apparmor相关配置
 	if apparmor.IsEnabled() {
 		appArmorProfile := "docker-default"
 		if len(c.AppArmorProfile) > 0 {
@@ -669,6 +693,7 @@ func (daemon *Daemon) createSpec(c *container.Container) (*libcontainerd.Spec, e
 		}
 		s.Process.ApparmorProfile = appArmorProfile
 	}
+	//设置容器的selinux,privilege,moutlabel等特性。
 	s.Process.SelinuxLabel = c.GetProcessLabel()
 	s.Process.NoNewPrivileges = c.NoNewPrivileges
 	s.Linux.MountLabel = c.MountLabel

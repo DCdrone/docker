@@ -129,11 +129,13 @@ func (clnt *client) prepareBundleDir(uid, gid int) (string, error) {
 	return p, nil
 }
 
+//容器的启动方法
 func (clnt *client) Create(containerID string, spec Spec, options ...CreateOption) (err error) {
 	clnt.lock(containerID)
 	defer clnt.unlock(containerID)
 
 	if ctr, err := clnt.getContainer(containerID); err == nil {
+		//这个我看着很奇怪，restarting是为什么？
 		if ctr.restarting {
 			ctr.restartManager.Cancel()
 			ctr.clean()
@@ -146,12 +148,16 @@ func (clnt *client) Create(containerID string, spec Spec, options ...CreateOptio
 	if err != nil {
 		return err
 	}
+	//准备工作目录。
 	dir, err := clnt.prepareBundleDir(uid, gid)
 	if err != nil {
 		return err
 	}
 
+	//创建容器，容器目录这个时候应该已经有了。
 	container := clnt.newContainer(filepath.Join(dir, containerID), options...)
+
+	//删除容器的增量文件，这就保证了容器每次启动时都是初始化的，干净的。
 	if err := container.clean(); err != nil {
 		return err
 	}
@@ -167,15 +173,19 @@ func (clnt *client) Create(containerID string, spec Spec, options ...CreateOptio
 		return err
 	}
 
+	//根据根文件创建容器临时文件。
 	f, err := os.Create(filepath.Join(container.dir, configFilename))
 	if err != nil {
 		return err
 	}
 	defer f.Close()
+	//解析spec，保存到/var/lib/docker/containers/目录下，作为容器的元数据。
+	//后面真实启动的时候也是读取这个文件吧。
 	if err := json.NewEncoder(f).Encode(spec); err != nil {
 		return err
 	}
 
+	//调用libcontainer/container_linux.go中的start()方法启动容器。
 	return container.start()
 }
 

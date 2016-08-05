@@ -67,15 +67,18 @@ func (ctr *container) spec() (*specs.Spec, error) {
 }
 
 func (ctr *container) start() error {
+	//从文件中读取配置，准备启动容器。
 	spec, err := ctr.spec()
 	if err != nil {
 		return nil
 	}
+	//打开IO流。
 	iopipe, err := ctr.openFifos(spec.Process.Terminal)
 	if err != nil {
 		return err
 	}
 
+	//容器创建的请求。
 	r := &containerd.CreateContainerRequest{
 		Id:         ctr.containerID,
 		BundlePath: ctr.dir,
@@ -85,8 +88,23 @@ func (ctr *container) start() error {
 		// check to see if we are running in ramdisk to disable pivot root
 		NoPivotRoot: os.Getenv("DOCKER_RAMDISK") != "",
 	}
+	//列表中增加容器
 	ctr.client.appendContainer(ctr)
 
+	//调用远程请求创建容器，这里为什么会有CS架构？
+	//在D:\workspace_1\sourcedocker\vendor\src\github.com\docker\containerd\api\grpc\types\api.pb.go中
+	/*
+			func (c *aPIClient) CreateContainer(ctx context.Context, in *CreateContainerRequest, opts ...grpc.CallOption) (*CreateContainerResponse, error) {
+			out := new(CreateContainerResponse)
+			err := grpc.Invoke(ctx, "/types.API/CreateContainer", in, out, c.cc, opts...)
+			if err != nil {
+				return nil, err
+			}
+			return out, nil
+		}
+	*/
+	//跟到这里怎么断了啊？这个有点麻烦了。
+	//这里通过restapi协议调用containerd的api接口，由containerd调用containerd-shm再调用runC实现。
 	resp, err := ctr.client.remote.apiClient.CreateContainer(context.Background(), r)
 	if err != nil {
 		ctr.closeFifos(iopipe)
@@ -99,6 +117,7 @@ func (ctr *container) start() error {
 	}
 	ctr.systemPid = systemPid(resp.Container)
 
+	//更新容器状态。
 	return ctr.client.backend.StateChanged(ctr.containerID, StateInfo{
 		State: StateStart,
 		Pid:   ctr.systemPid,
