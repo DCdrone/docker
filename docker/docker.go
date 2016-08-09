@@ -4,16 +4,16 @@ import (
 	"fmt"
 	"os"
 
-	"../api/client"
-	"../cli"
-	"../dockerversion"
-	"../pkg/term"
-	"../utils"
+	"github.com/docker/docker//api/client"
+	"github.com/docker/docker//cli"
+	"github.com/docker/docker//dockerversion"
+	"github.com/docker/docker//pkg/term"
+	"github.com/docker/docker//utils"
 
-	"../pkg/reexec"
+	"github.com/docker/docker//pkg/reexec"
 
-	flag "../pkg/m flag"
 	"github.com/Sirupsen/logrus"
+	flag "github.com/docker/docker/pkg/mflag"
 )
 
 func main() {
@@ -26,7 +26,6 @@ func main() {
 	stdin, stdout, stderr := term.StdStreams()
 
 	logrus.SetOutput(stderr)
-
 
 	//合并参数类型，所有的参数类型都是FlagSet类，该类定义如下：
 	//type FlagSet struct {
@@ -59,11 +58,11 @@ func main() {
 		//真实的打印内容
 		flag.PrintDefaults()
 
-                     //开始打印可选择的命令Commands。
+		//开始打印可选择的命令Commands。
 		help := "\nCommands:\n"
 
-                     //循环输出dockerCommands命令中的可选择命令，分别打印他们的名字和描述信息。
-	          //dockerCommands最终由cli.DockerCommands中提供。
+		//循环输出dockerCommands命令中的可选择命令，分别打印他们的名字和描述信息。
+		//dockerCommands最终由cli.DockerCommands中提供。
 		for _, cmd := range dockerCommands {
 			help += fmt.Sprintf("    %-10.10s%s\n", cmd.Name, cmd.Description)
 		}
@@ -73,15 +72,15 @@ func main() {
 		fmt.Fprintf(stdout, "%s\n", help)
 	}
 
-          //解析参数
+	//解析参数
 	flag.Parse()
 
-           //version单独处理，这里通过判断flVersion的返回结果是否为真进行处理。
+	//version单独处理，这里通过判断flVersion的返回结果是否为真进行处理。
 	if *flVersion {
 		showVersion()
 		return
 	}
-          //help信息单独处理
+	//help信息单独处理
 	if *flHelp {
 		// if global flag --help is present, regardless of what other options and commands there are,
 		// just print the usage.
@@ -89,13 +88,23 @@ func main() {
 		return
 	}
 
-          //创建client模式的docker，详细分析请见api/client/cli.go包中的NewDockerCli函数。
+	//创建client模式的docker，详细分析请见api/client/cli.go包中的NewDockerCli函数。
 	clientCli := client.NewDockerCli(stdin, stdout, stderr, clientFlags)
 
-          //合并client模式的docker和daemonCli模式的docker，实际中只会有一个在工作。
+	//合并client模式的docker和daemonCli模式的docker，实际中只会有一个在工作。
 	//daemonCli对象的创建请见docker/daemon.go中的daemonCli cli.Handler = NewDaemonCli()
+	//cli.New接受两个参数，分别是dockercli对象和daemoncli对象，两个对象结构不同。
+	//但是返回的是一个cli对象:
+	/*
+			type Cli struct {
+			    Stderr   io.Writer
+			    handlers []Handler
+			    Usage    func()
+		            }
+	*/
+	//clientClie和daemoncli就放在句柄handlers数组中。
 	c := cli.New(clientCli, daemonCli)
-	//c.Run函数见cli中的cli.go的func (cli *Cli) Run(args ...string) error 
+	//c.Run函数见cli中的cli.go的func (cli *Cli) Run(args ...string) error
 	if err := c.Run(flag.Args()...); err != nil {
 		if sterr, ok := err.(cli.StatusError); ok {
 			if sterr.Status != "" {
