@@ -573,6 +573,7 @@ func (daemon *Daemon) connectToNetwork(container *container.Container, idOrName 
 	}
 
 	//这一步就更新容器的网路配置了吗？应该还没有吧。
+	//返回的是network对象。
 	n, err := daemon.updateNetworkConfig(container, idOrName, endpointConfig, updateSettings)
 	if err != nil {
 		return err
@@ -605,6 +606,7 @@ func (daemon *Daemon) connectToNetwork(container *container.Container, idOrName 
 			sync.Mutex
 		}
 	*/
+	//创建沙盒？
 	sb := daemon.getNetworkSandbox(container)
 	//貌似在这一步就会创建容器相应的IP地址等信息了。
 	createOptions, err := container.BuildCreateEndpointOptions(n, endpointConfig, sb)
@@ -614,7 +616,11 @@ func (daemon *Daemon) connectToNetwork(container *container.Container, idOrName 
 
 	endpointName := strings.TrimPrefix(container.Name, "/")
 	//调用Plugin的CreateEndpoint方法创建endpoint。
-	//这里的n是一个Network接口。
+	//这里的n是一个Network接口。network的createEndpoint会调用addEndpoint方法，
+	//addEndpoint方法会调用具体的driver，比如bridge driver的createEndpoint方法。
+	//在宿主机上真实的创建endpoint。同时，这个endpoint是和network关联的，比如说
+	//bridge模式下，创建endpoint就是创建veth设备，并且在这一步骤里面，veth设备的
+	//一端就已经连接到了bridge上。
 	ep, err := n.CreateEndpoint(endpointName, createOptions...)
 	if err != nil {
 		return err
@@ -643,6 +649,7 @@ func (daemon *Daemon) connectToNetwork(container *container.Container, idOrName 
 		if err != nil {
 			return err
 		}
+		//创建新的沙盒。
 		sb, err = controller.NewSandbox(container.ID, options...)
 		if err != nil {
 			return err
@@ -657,7 +664,7 @@ func (daemon *Daemon) connectToNetwork(container *container.Container, idOrName 
 		return err
 	}
 
-	//？
+	//将沙盒和endpoint连接起来。每一个沙盒对应一个容器。
 	if err := ep.Join(sb, joinOptions...); err != nil {
 		return err
 	}

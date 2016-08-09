@@ -154,7 +154,12 @@ type controller struct {
 }
 
 // New creates a new instance of network controller.
+//网络的控制器
 func New(cfgOptions ...config.Option) (NetworkController, error) {
+	//网络控制器对象，包括以下内容：
+	/*
+	   id号，配置，包括的沙盒（namespaces），驱动，ip管理驱动，数据库
+	*/
 	c := &controller{
 		id:          stringid.GenerateRandomID(),
 		cfg:         config.ParseConfigOptions(cfgOptions...),
@@ -164,10 +169,13 @@ func New(cfgOptions ...config.Option) (NetworkController, error) {
 		svcDb:       make(map[string]svcInfo),
 	}
 
+	//初始化数据库。
 	if err := c.initStores(); err != nil {
 		return nil, err
 	}
 
+	//配置集群模式下的自动发现，这应该是使用swarm时候可以用overlay才需要这一步。
+	//周飒重点研究。
 	if c.cfg != nil && c.cfg.Cluster.Watcher != nil {
 		if err := c.initDiscovery(c.cfg.Cluster.Watcher); err != nil {
 			// Failing to initialize discovery is a bad situation to be in.
@@ -176,19 +184,27 @@ func New(cfgOptions ...config.Option) (NetworkController, error) {
 		}
 	}
 
+	//这一步会创建对应的网络吗？按理说不会，只是初始化一些配置应该。
+	//这里对符合要求的驱动进行注册。注册就是将controller的drivers数组中配置
+	//具体的driver，这里是一个driverTable包括driver的名称和driver的句柄以及capabilities。
 	if err := initDrivers(c); err != nil {
 		return nil, err
 	}
 
+	//初始化IP地址管理驱动。同样的，会在controller中注册ipam的driver，
+	//对应controller的ipamdrivers，ipamTable是由名称和ipamData构成，
+	//ipamData是一个struct，包括某个具体的ipam的句柄，capabilities等信息。
 	if err := initIpams(c, c.getStore(datastore.LocalScope),
 		c.getStore(datastore.GlobalScope)); err != nil {
 		return nil, err
 	}
 
+	//清楚垃圾信息。
 	c.sandboxCleanup()
 	c.cleanupLocalEndpoints()
 	c.networkCleanup()
 
+	//这一步应该是接受remote plugin的吧？
 	if err := c.startExternalKeyListener(); err != nil {
 		return nil, err
 	}
@@ -434,11 +450,14 @@ func (c *controller) RegisterIpamDriverWithCapabilities(name string, driver ipam
 // NewNetwork creates a new network of the specified network type. The options
 // are network specific and modeled in a generic way.
 func (c *controller) NewNetwork(networkType, name string, options ...NetworkOption) (Network, error) {
+
+	//验证网络的名称是否符合规范。
 	if !config.IsValidName(name) {
 		return nil, ErrInvalidName(name)
 	}
 
 	// Construct the network object
+	//创建网络的对象。在libnetwork/network.go中。
 	network := &network{
 		name:        name,
 		networkType: networkType,
@@ -450,14 +469,18 @@ func (c *controller) NewNetwork(networkType, name string, options ...NetworkOpti
 		drvOnce:     &sync.Once{},
 	}
 
+	//分解配置。
 	network.processOptions(options...)
 
 	// Make sure we have a driver available for this network type
 	// before we allocate anything.
+	//确定该driver确实存在。就是检查network中的controller的drivers是否含有该networktype。
 	if _, err := network.driver(true); err != nil {
 		return nil, err
 	}
 
+	//预留本宿主机可以使用的ip地址池。
+	//周飒仔细研究。
 	err := network.ipamAllocate()
 	if err != nil {
 		return nil, err
@@ -468,6 +491,7 @@ func (c *controller) NewNetwork(networkType, name string, options ...NetworkOpti
 		}
 	}()
 
+	//增加给网络模式。
 	if err = c.addNetwork(network); err != nil {
 		return nil, err
 	}
@@ -502,13 +526,17 @@ func (c *controller) NewNetwork(networkType, name string, options ...NetworkOpti
 	return network, nil
 }
 
+//添加网络模式。
 func (c *controller) addNetwork(n *network) error {
+	//通过注册在controller.drivers数组中的句柄，该d参数。
+	//这里的d就是那个具体实现的driver，bridge driver。
 	d, err := n.driver(true)
 	if err != nil {
 		return err
 	}
 
 	// Create the network
+	//使用bridge的driver，在libnetwork/drivers/bridge/bridge.go中。
 	if err := d.CreateNetwork(n.id, n.generic, n.getIPData(4), n.getIPData(6)); err != nil {
 		return err
 	}

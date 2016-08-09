@@ -577,6 +577,7 @@ func (d *driver) CreateNetwork(id string, option map[string]interface{}, ipV4Dat
 	return d.storeUpdate(config)
 }
 
+//bridge模式下的网桥创建的具体实现。
 func (d *driver) createNetwork(config *networkConfiguration) error {
 	var err error
 

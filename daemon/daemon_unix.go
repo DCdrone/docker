@@ -622,6 +622,8 @@ func (daemon *Daemon) initNetworkController(config *Config) (libnetwork.NetworkC
 		return nil, err
 	}
 
+	//创建controller，具体代码在libnetwork/controller.go中。
+	//主要注册controller的网络驱动，ip地址管理的驱动。
 	controller, err := libnetwork.New(netOptions...)
 	if err != nil {
 		return nil, fmt.Errorf("error obtaining controller instance: %v", err)
@@ -637,8 +639,10 @@ func (daemon *Daemon) initNetworkController(config *Config) (libnetwork.NetworkC
 		return nil, fmt.Errorf("Error creating default \"host\" network: %v", err)
 	}
 
+	//查看bridge模式有没有被禁用。
 	if !config.DisableBridge {
 		// Initialize default driver "bridge"
+		//初始化bridge driver。
 		if err := initBridgeDriver(controller, config); err != nil {
 			return nil, err
 		}
@@ -659,6 +663,7 @@ func driverOptions(config *Config) []nwconfig.Option {
 	return dOptions
 }
 
+//Bridge网桥的初始化，以这个为重点分析。
 func initBridgeDriver(controller libnetwork.NetworkController, config *Config) error {
 	if n, err := controller.NetworkByName("bridge"); err == nil {
 		if err = n.Delete(); err != nil {
@@ -666,10 +671,12 @@ func initBridgeDriver(controller libnetwork.NetworkController, config *Config) e
 		}
 	}
 
+	//配置默认网桥模式的interface的名称，默认为dockerO
 	bridgeName := bridge.DefaultBridgeName
 	if config.bridgeConfig.Iface != "" {
 		bridgeName = config.bridgeConfig.Iface
 	}
+	//bridge网络的默认配置。
 	netOption := map[string]string{
 		bridge.BridgeName:         bridgeName,
 		bridge.DefaultBridge:      strconv.FormatBool(true),
@@ -678,7 +685,7 @@ func initBridgeDriver(controller libnetwork.NetworkController, config *Config) e
 		bridge.EnableICC:          strconv.FormatBool(config.bridgeConfig.InterContainerCommunication),
 	}
 
-	// --ip processing
+	//配置docker0的默认IP地址。
 	if config.bridgeConfig.DefaultIP != nil {
 		netOption[bridge.DefaultBindingIP] = config.bridgeConfig.DefaultIP.String()
 	}
@@ -768,6 +775,8 @@ func initBridgeDriver(controller libnetwork.NetworkController, config *Config) e
 		v6Conf = append(v6Conf, ipamV6Conf)
 	}
 	// Initialize default network on "bridge" with the same name
+	//真正配置docker0网桥的步骤。在该步骤里，宿主机上的docker0网桥将要被创建。
+	//在libnetwork/controller.go中分析该方法。
 	_, err = controller.NewNetwork("bridge", "bridge",
 		libnetwork.NetworkOptionEnableIPv6(config.bridgeConfig.EnableIPv6),
 		libnetwork.NetworkOptionDriverOpts(netOption),
